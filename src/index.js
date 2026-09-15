@@ -1,5 +1,6 @@
 const SHOPIFY_API_VERSION = '2026-07';
 
+
 /* =========================================================
    RESPONSE HELPERS
 ========================================================= */
@@ -16,6 +17,20 @@ function json(data, status = 200) {
 
 
 /* =========================================================
+   HTML ESCAPE
+========================================================= */
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+
+/* =========================================================
    ENVIRONMENT VALIDATION
 ========================================================= */
 
@@ -23,7 +38,9 @@ function validateEnvironment(env) {
   const required = [
     'SHOPIFY_SHOP',
     'SHOPIFY_CLIENT_ID',
-    'SHOPIFY_CLIENT_SECRET'
+    'SHOPIFY_CLIENT_SECRET',
+    'RESEND_API_KEY',
+    'EMAIL_FROM'
   ];
 
   for (const key of required) {
@@ -308,8 +325,6 @@ async function shopifyGraphQL(
 /* =========================================================
    QUANTITY DISCOUNTS
 
-   Must match Liquid:
-
    1 - 4   = 0%
    5 - 10  = 5%
    11 - 20 = 8%
@@ -340,6 +355,494 @@ function getDiscountPercentage(quantity) {
 
 
 /* =========================================================
+   FORMAT MONEY
+========================================================= */
+
+function formatMoney(amount, currency) {
+  const number =
+    Number(amount || 0);
+
+  try {
+    return new Intl.NumberFormat(
+      'en-US',
+      {
+        style: 'currency',
+        currency: currency || 'USD'
+      }
+    ).format(number);
+  } catch (error) {
+    return `${currency || 'USD'} ${number.toFixed(2)}`;
+  }
+}
+
+
+/* =========================================================
+   BUILD EMAIL PRODUCT ROWS
+========================================================= */
+
+function buildEmailProductRows(emailItems, currency) {
+  return emailItems
+    .map((item) => {
+      const productTitle =
+        escapeHtml(item.productTitle);
+
+      const variantTitle =
+        escapeHtml(item.variantTitle);
+
+      const quantity =
+        Number(item.quantity);
+
+      const unitPrice =
+        Number(item.price);
+
+      const lineTotal =
+        unitPrice * quantity;
+
+      return `
+        <tr>
+          <td
+            style="
+              padding:15px 8px;
+              border-bottom:1px solid #eeeeee;
+              font-size:14px;
+              line-height:1.5;
+            "
+          >
+            <strong>
+              ${productTitle}
+            </strong>
+
+            ${
+              variantTitle &&
+              variantTitle !== 'Default Title'
+                ? `
+                  <div
+                    style="
+                      margin-top:3px;
+                      color:#777777;
+                      font-size:12px;
+                    "
+                  >
+                    ${variantTitle}
+                  </div>
+                `
+                : ''
+            }
+          </td>
+
+          <td
+            align="center"
+            style="
+              padding:15px 8px;
+              border-bottom:1px solid #eeeeee;
+              font-size:14px;
+            "
+          >
+            ${quantity}
+          </td>
+
+          <td
+            align="right"
+            style="
+              padding:15px 8px;
+              border-bottom:1px solid #eeeeee;
+              font-size:14px;
+            "
+          >
+            ${formatMoney(lineTotal, currency)}
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+
+/* =========================================================
+   SEND CUSTOMER EMAIL THROUGH RESEND
+========================================================= */
+
+async function sendOrderConfirmationEmail(
+  env,
+  {
+    email,
+    customer,
+    order,
+    emailItems
+  }
+) {
+  const firstName =
+    String(
+      customer.first_name || ''
+    ).trim();
+
+  const orderName =
+    String(
+      order.name || 'Order'
+    );
+
+  const total =
+    order
+      .totalPriceSet
+      ?.shopMoney
+      ?.amount || '0.00';
+
+  const currency =
+    order
+      .totalPriceSet
+      ?.shopMoney
+      ?.currencyCode || 'USD';
+
+  const productRows =
+    buildEmailProductRows(
+      emailItems,
+      currency
+    );
+
+  const safeFirstName =
+    escapeHtml(firstName);
+
+  const safeOrderName =
+    escapeHtml(orderName);
+
+  const html = `
+    <!doctype html>
+
+    <html>
+
+      <head>
+
+        <meta charset="utf-8">
+
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1"
+        >
+
+        <title>
+          Order Confirmation
+        </title>
+
+      </head>
+
+
+      <body
+        style="
+          margin:0;
+          padding:0;
+          background:#f5f5f5;
+          font-family:Arial, Helvetica, sans-serif;
+          color:#222222;
+        "
+      >
+
+        <table
+          role="presentation"
+          width="100%"
+          cellspacing="0"
+          cellpadding="0"
+          border="0"
+          style="
+            background:#f5f5f5;
+            padding:30px 15px;
+          "
+        >
+
+          <tr>
+
+            <td align="center">
+
+              <table
+                role="presentation"
+                width="100%"
+                cellspacing="0"
+                cellpadding="0"
+                border="0"
+                style="
+                  max-width:650px;
+                  background:#ffffff;
+                  border-radius:8px;
+                "
+              >
+
+                <tr>
+
+                  <td
+                    style="
+                      padding:35px 30px;
+                      text-align:center;
+                      border-bottom:1px solid #eeeeee;
+                    "
+                  >
+
+                    <h1
+                      style="
+                        margin:0;
+                        font-size:26px;
+                        line-height:1.3;
+                      "
+                    >
+                      Thank you for your order!
+                    </h1>
+
+                  </td>
+
+                </tr>
+
+
+                <tr>
+
+                  <td
+                    style="
+                      padding:35px 30px;
+                    "
+                  >
+
+                    <p
+                      style="
+                        margin:0 0 15px;
+                        font-size:16px;
+                        line-height:1.6;
+                      "
+                    >
+                      ${
+                        safeFirstName
+                          ? `Hi ${safeFirstName},`
+                          : 'Hi,'
+                      }
+                    </p>
+
+
+                    <p
+                      style="
+                        margin:0 0 25px;
+                        font-size:16px;
+                        line-height:1.6;
+                      "
+                    >
+                      We have received your order successfully.
+                      Your order number is
+                      <strong>
+                        ${safeOrderName}
+                      </strong>.
+                    </p>
+
+
+                    <table
+                      role="presentation"
+                      width="100%"
+                      cellspacing="0"
+                      cellpadding="0"
+                      border="0"
+                      style="
+                        border-collapse:collapse;
+                      "
+                    >
+
+                      <thead>
+
+                        <tr>
+
+                          <th
+                            align="left"
+                            style="
+                              padding:12px 8px;
+                              border-bottom:2px solid #222222;
+                              font-size:13px;
+                            "
+                          >
+                            Product
+                          </th>
+
+
+                          <th
+                            align="center"
+                            style="
+                              padding:12px 8px;
+                              border-bottom:2px solid #222222;
+                              font-size:13px;
+                            "
+                          >
+                            Qty
+                          </th>
+
+
+                          <th
+                            align="right"
+                            style="
+                              padding:12px 8px;
+                              border-bottom:2px solid #222222;
+                              font-size:13px;
+                            "
+                          >
+                            Total
+                          </th>
+
+                        </tr>
+
+                      </thead>
+
+
+                      <tbody>
+
+                        ${productRows}
+
+                      </tbody>
+
+                    </table>
+
+
+                    <table
+                      role="presentation"
+                      width="100%"
+                      cellspacing="0"
+                      cellpadding="0"
+                      border="0"
+                      style="
+                        margin-top:25px;
+                      "
+                    >
+
+                      <tr>
+
+                        <td
+                          align="right"
+                          style="
+                            font-size:18px;
+                            line-height:1.5;
+                          "
+                        >
+
+                          <strong>
+                            Order Total:
+                            ${formatMoney(total, currency)}
+                          </strong>
+
+                        </td>
+
+                      </tr>
+
+                    </table>
+
+
+                    <p
+                      style="
+                        margin:30px 0 0;
+                        font-size:14px;
+                        line-height:1.6;
+                        color:#666666;
+                      "
+                    >
+                      We will contact you if we need any
+                      additional information regarding your order.
+                    </p>
+
+                  </td>
+
+                </tr>
+
+              </table>
+
+            </td>
+
+          </tr>
+
+        </table>
+
+      </body>
+
+    </html>
+  `;
+
+
+  console.log(
+    'Sending customer confirmation email:',
+    {
+      email,
+      orderName
+    }
+  );
+
+
+  const response =
+    await fetch(
+      'https://api.resend.com/emails',
+      {
+        method: 'POST',
+
+        headers: {
+          'Authorization':
+            `Bearer ${env.RESEND_API_KEY}`,
+
+          'Content-Type':
+            'application/json'
+        },
+
+        body:
+          JSON.stringify({
+            from:
+              env.EMAIL_FROM,
+
+            to: [
+              email
+            ],
+
+            subject:
+              `Order Confirmation ${orderName}`,
+
+            html
+          })
+      }
+    );
+
+
+  let data;
+
+  try {
+    data =
+      await response.json();
+  } catch (error) {
+    console.error(
+      'Unable to parse Resend response:',
+      error
+    );
+
+    throw new Error(
+      'Email service returned an invalid response.'
+    );
+  }
+
+
+  if (!response.ok) {
+    console.error(
+      'Resend API error:',
+      response.status,
+      data
+    );
+
+    throw new Error(
+      data?.message ||
+      `Unable to send confirmation email. HTTP ${response.status}.`
+    );
+  }
+
+
+  console.log(
+    'Customer confirmation email accepted:',
+    {
+      email,
+      orderName,
+      emailId:
+        data?.id || null
+    }
+  );
+
+
+  return data;
+}
+
+
+/* =========================================================
    CREATE ORDER
 ========================================================= */
 
@@ -348,6 +851,7 @@ async function createOrder(
   env
 ) {
   let payload;
+
 
   /* -------------------------
      Parse JSON
@@ -375,6 +879,7 @@ async function createOrder(
   const customer =
     payload.customer || {};
 
+
   const email =
     String(
       customer.email || ''
@@ -382,12 +887,31 @@ async function createOrder(
       .trim()
       .toLowerCase();
 
+
   if (!email) {
     return json(
       {
         success: false,
         message:
           'Email address is required.'
+      },
+      400
+    );
+  }
+
+
+  /*
+   * Basic email validation.
+   */
+
+  if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
+    return json(
+      {
+        success: false,
+        message:
+          'Please enter a valid email address.'
       },
       400
     );
@@ -415,6 +939,7 @@ async function createOrder(
 
   let items;
 
+
   try {
     items =
       payload.items.map((item) => {
@@ -429,6 +954,7 @@ async function createOrder(
             )
             .trim();
 
+
         const quantity =
           Math.max(
             1,
@@ -438,6 +964,7 @@ async function createOrder(
             ) || 1
           );
 
+
         if (
           !/^\d+$/.test(variantId)
         ) {
@@ -445,6 +972,7 @@ async function createOrder(
             'Invalid Shopify variant ID.'
           );
         }
+
 
         return {
           variantId:
@@ -458,6 +986,7 @@ async function createOrder(
     return json(
       {
         success: false,
+
         message:
           error.message ||
           'Invalid order item.'
@@ -477,9 +1006,6 @@ async function createOrder(
 
   /* =====================================================
      FETCH REAL VARIANT PRICES
-
-     IMPORTANT:
-     We never trust prices sent from storefront JavaScript.
   ===================================================== */
 
   const variantIds =
@@ -564,83 +1090,112 @@ async function createOrder(
      BUILD ORDER LINE ITEMS
   ===================================================== */
 
-  const lineItems =
-    items.map((item) => {
+  const lineItems = [];
 
-      const variant =
-        variantMap.get(
-          item.variantId
-        );
-
-      if (!variant) {
-        throw new Error(
-          'One of the selected Shopify variants no longer exists.'
-        );
-      }
+  const emailItems = [];
 
 
-      const normalPrice =
-        Number(
-          variant.price
-        );
+  for (const item of items) {
+
+    const variant =
+      variantMap.get(
+        item.variantId
+      );
 
 
-      if (
-        !Number.isFinite(normalPrice)
-      ) {
-        throw new Error(
-          'Unable to determine Shopify variant price.'
-        );
-      }
+    if (!variant) {
+      throw new Error(
+        'One of the selected Shopify variants no longer exists.'
+      );
+    }
 
 
-      const discount =
-        getDiscountPercentage(
-          item.quantity
-        );
+    const normalPrice =
+      Number(
+        variant.price
+      );
 
 
-      const discountedPrice =
-        normalPrice *
-        (100 - discount) /
-        100;
+    if (
+      !Number.isFinite(normalPrice)
+    ) {
+      throw new Error(
+        'Unable to determine Shopify variant price.'
+      );
+    }
 
 
-      return {
+    const discount =
+      getDiscountPercentage(
+        item.quantity
+      );
 
-        variantId:
-          item.variantId,
 
-        quantity:
-          item.quantity,
+    const discountedPrice =
+      normalPrice *
+      (100 - discount) /
+      100;
 
-        /*
-         * Force the order line price to match
-         * the wholesale quantity-discount price.
-         */
 
-        priceSet: {
-          shopMoney: {
-            amount:
-              discountedPrice.toFixed(2),
+    /*
+     * Shopify line item.
+     */
 
-            currencyCode:
-              currency
-          }
-        },
+    lineItems.push({
 
-        properties: [
-          {
-            name:
-              'Quantity Discount',
+      variantId:
+        item.variantId,
 
-            value:
-              `${discount}%`
-          }
-        ]
+      quantity:
+        item.quantity,
 
-      };
+      priceSet: {
+        shopMoney: {
+          amount:
+            discountedPrice.toFixed(2),
+
+          currencyCode:
+            currency
+        }
+      },
+
+      properties: [
+        {
+          name:
+            'Quantity Discount',
+
+          value:
+            `${discount}%`
+        }
+      ]
+
     });
+
+
+    /*
+     * Separate safe data for customer email.
+     */
+
+    emailItems.push({
+
+      productTitle:
+        variant.product?.title ||
+        'Product',
+
+      variantTitle:
+        variant.title || '',
+
+      quantity:
+        item.quantity,
+
+      price:
+        discountedPrice.toFixed(2),
+
+      discount
+
+    });
+
+  }
 
 
   /* =====================================================
@@ -771,17 +1326,18 @@ async function createOrder(
     options: {
 
       /*
-       * Send normal Shopify order
-       * confirmation email to customer.
+       * IMPORTANT:
+       *
+       * Shopify customer receipt is disabled.
+       * Resend handles the immediate customer email.
        */
 
       sendReceipt:
-        true,
+        false,
 
 
       /*
-       * No fulfillment confirmation
-       * email yet.
+       * No fulfillment confirmation yet.
        */
 
       sendFulfillmentReceipt:
@@ -789,20 +1345,7 @@ async function createOrder(
 
 
       /*
-       * IMPORTANT
-       * =========
-       *
-       * Previously:
-       *
-       * DECREMENT_OBEYING_POLICY
-       *
-       * That caused:
-       *
-       * "Unable to reserve inventory"
-       *
-       * BYPASS allows the wholesale order
-       * to be created without Shopify
-       * attempting to reserve inventory.
+       * Keep existing wholesale inventory behavior.
        */
 
       inventoryBehaviour:
@@ -821,8 +1364,10 @@ async function createOrder(
     'Creating Shopify order:',
     {
       email,
+
       itemCount:
         lineItems.length,
+
       currency
     }
   );
@@ -880,9 +1425,11 @@ async function createOrder(
               ? error.field.join('.')
               : error.field;
 
+
           if (field) {
             return `${field}: ${error.message}`;
           }
+
 
           return error.message;
 
@@ -893,6 +1440,7 @@ async function createOrder(
     return json(
       {
         success: false,
+
         message:
           errorMessage
       },
@@ -909,6 +1457,7 @@ async function createOrder(
     return json(
       {
         success: false,
+
         message:
           'Shopify did not create the order.'
       },
@@ -917,48 +1466,143 @@ async function createOrder(
   }
 
 
+  const createdOrder =
+    orderCreate.order;
+
+
   /* =====================================================
-     SUCCESS
+     SHOPIFY ORDER SUCCESS
   ===================================================== */
 
   console.log(
     'Shopify order created:',
     {
       id:
-        orderCreate.order.id,
+        createdOrder.id,
 
       name:
-        orderCreate.order.name,
+        createdOrder.name,
 
       email:
-        orderCreate.order.email
+        createdOrder.email
     }
   );
 
+
+  /* =====================================================
+     SEND CUSTOMER EMAIL IMMEDIATELY
+  ===================================================== */
+
+  let emailSent = false;
+
+  let emailId = null;
+
+  let emailError = null;
+
+
+  try {
+
+    const emailResult =
+      await sendOrderConfirmationEmail(
+        env,
+        {
+          email,
+
+          customer,
+
+          order:
+            createdOrder,
+
+          emailItems
+        }
+      );
+
+
+    emailSent =
+      true;
+
+
+    emailId =
+      emailResult?.id ||
+      null;
+
+
+  } catch (error) {
+
+    /*
+     * VERY IMPORTANT:
+     *
+     * Shopify already created the order.
+     *
+     * We therefore do NOT return success:false here.
+     * Otherwise the customer could click Place Order again
+     * and create a duplicate Shopify order.
+     */
+
+    emailError =
+      error?.message ||
+      'Unable to send confirmation email.';
+
+
+    console.error(
+      'ORDER CREATED BUT CUSTOMER EMAIL FAILED:',
+      {
+        orderId:
+          createdOrder.id,
+
+        orderName:
+          createdOrder.name,
+
+        customerEmail:
+          email,
+
+        error:
+          emailError
+      }
+    );
+
+  }
+
+
+  /* =====================================================
+     SUCCESS
+  ===================================================== */
 
   return json({
 
     success: true,
 
     orderId:
-      orderCreate.order.id,
+      createdOrder.id,
 
     orderName:
-      orderCreate.order.name,
+      createdOrder.name,
 
     total:
-      orderCreate.order
+      createdOrder
         .totalPriceSet
         ?.shopMoney
         ?.amount,
 
     currency:
-      orderCreate.order
+      createdOrder
         .totalPriceSet
         ?.shopMoney
-        ?.currencyCode
+        ?.currencyCode,
+
+    emailSent,
+
+    emailId,
+
+    /*
+     * Helpful while testing.
+     * You can remove emailError later.
+     */
+
+    emailError
 
   });
+
 }
 
 
@@ -1005,6 +1649,7 @@ export default {
 
         return json({
           success: true,
+
           service:
             'Shopify Order Builder API'
         });
@@ -1033,6 +1678,7 @@ export default {
           return json(
             {
               success: false,
+
               message:
                 'Method not allowed.'
             },
@@ -1059,9 +1705,11 @@ export default {
             'Invalid Shopify App Proxy signature.'
           );
 
+
           return json(
             {
               success: false,
+
               message:
                 'Invalid Shopify app proxy signature.'
             },
@@ -1091,9 +1739,11 @@ export default {
             proxyShop
           );
 
+
           return json(
             {
               success: false,
+
               message:
                 'Invalid Shopify shop.'
             },
@@ -1122,6 +1772,7 @@ export default {
       return json(
         {
           success: false,
+
           message:
             'Not found.'
         },
@@ -1136,10 +1787,12 @@ export default {
         error
       );
 
+
       console.error(
         'Worker error message:',
         error?.message
       );
+
 
       console.error(
         'Worker error stack:',
