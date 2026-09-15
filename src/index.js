@@ -44,10 +44,7 @@ function validateEnvironment(env) {
   ];
 
   for (const key of required) {
-    if (
-      !env[key] ||
-      !String(env[key]).trim()
-    ) {
+    if (!env[key] || !String(env[key]).trim()) {
       throw new Error(
         `Missing Cloudflare environment variable: ${key}`
       );
@@ -604,7 +601,8 @@ async function sendOrderConfirmationEmail(
   const html = `
     <!doctype html>
 
-    <html>
+    <html lang="en">
+
       <head>
         <meta charset="utf-8">
 
@@ -617,6 +615,7 @@ async function sendOrderConfirmationEmail(
           Order Confirmation
         </title>
       </head>
+
 
       <body
         style="
@@ -635,13 +634,18 @@ async function sendOrderConfirmationEmail(
           cellpadding="0"
           border="0"
           style="
+            width:100%;
             background:#f5f5f5;
-            padding:30px 15px;
           "
         >
 
           <tr>
-            <td align="center">
+            <td
+              align="center"
+              style="
+                padding:30px 15px;
+              "
+            >
 
               <table
                 role="presentation"
@@ -650,6 +654,7 @@ async function sendOrderConfirmationEmail(
                 cellpadding="0"
                 border="0"
                 style="
+                  width:100%;
                   max-width:650px;
                   background:#ffffff;
                   border-radius:8px;
@@ -670,6 +675,7 @@ async function sendOrderConfirmationEmail(
                         margin:0;
                         font-size:26px;
                         line-height:1.3;
+                        color:#222222;
                       "
                     >
                       Thank you for your order!
@@ -709,11 +715,8 @@ async function sendOrderConfirmationEmail(
                       "
                     >
                       We have received your order successfully.
-
                       Your order number is
-                      <strong>
-                        ${safeOrderName}
-                      </strong>.
+                      <strong>${safeOrderName}</strong>.
                     </p>
 
 
@@ -724,6 +727,7 @@ async function sendOrderConfirmationEmail(
                       cellpadding="0"
                       border="0"
                       style="
+                        width:100%;
                         border-collapse:collapse;
                       "
                     >
@@ -781,6 +785,7 @@ async function sendOrderConfirmationEmail(
                       cellpadding="0"
                       border="0"
                       style="
+                        width:100%;
                         margin-top:25px;
                       "
                     >
@@ -793,12 +798,10 @@ async function sendOrderConfirmationEmail(
                             line-height:1.5;
                           "
                         >
-
                           <strong>
                             Order Total:
                             ${formatMoney(total, currency)}
                           </strong>
-
                         </td>
                       </tr>
 
@@ -828,6 +831,7 @@ async function sendOrderConfirmationEmail(
         </table>
 
       </body>
+
     </html>
   `;
 
@@ -866,10 +870,7 @@ async function sendOrderConfirmationEmail(
 
 
   /*
-   * Optional.
-   *
-   * If EMAIL_REPLY_TO is configured in Cloudflare,
-   * customer replies will go there.
+   * Optional reply-to address.
    */
 
   if (
@@ -941,7 +942,6 @@ async function sendOrderConfirmationEmail(
     {
       email,
       orderName,
-
       emailId:
         data?.id || null
     }
@@ -1122,8 +1122,6 @@ async function createOrder(
 
   /* =====================================================
      FETCH REAL VARIANT PRICES
-
-     Do not trust prices from storefront JavaScript.
   ===================================================== */
 
   const variantIds =
@@ -1260,7 +1258,7 @@ async function createOrder(
 
 
     /*
-     * Shopify order line item
+     * Shopify line item
      */
 
     lineItems.push({
@@ -1270,11 +1268,6 @@ async function createOrder(
 
       quantity:
         item.quantity,
-
-      /*
-       * Force order line price to match
-       * wholesale quantity discount.
-       */
 
       priceSet: {
         shopMoney: {
@@ -1300,8 +1293,7 @@ async function createOrder(
 
 
     /*
-     * Separate data used only for
-     * confirmation email.
+     * Customer email line item
      */
 
     emailItems.push({
@@ -1455,13 +1447,8 @@ async function createOrder(
     options: {
 
       /*
-       * IMPORTANT:
-       *
-       * Customer order confirmation is
-       * handled by Resend.
-       *
-       * Keep this false to prevent
-       * duplicate customer emails.
+       * Customer confirmation is handled
+       * by Resend.
        */
 
       sendReceipt:
@@ -1469,8 +1456,8 @@ async function createOrder(
 
 
       /*
-       * No fulfillment confirmation
-       * at order creation.
+       * Do not send fulfillment receipt
+       * when creating the order.
        */
 
       sendFulfillmentReceipt:
@@ -1478,8 +1465,8 @@ async function createOrder(
 
 
       /*
-       * Preserve your existing wholesale
-       * inventory behavior.
+       * Preserve your existing inventory
+       * behavior.
        */
 
       inventoryBehaviour:
@@ -1576,6 +1563,7 @@ async function createOrder(
     return json(
       {
         success: false,
+
         message:
           errorMessage
       },
@@ -1592,6 +1580,7 @@ async function createOrder(
     return json(
       {
         success: false,
+
         message:
           'Shopify did not create the order.'
       },
@@ -1667,14 +1656,13 @@ async function createOrder(
   } catch (error) {
 
     /*
-     * IMPORTANT:
+     * Shopify has already created the order.
      *
-     * The Shopify order already exists.
+     * Email failure must NOT make the entire
+     * order request return success:false.
      *
-     * Do not return success:false here.
-     *
-     * Otherwise frontend retry logic could
-     * create a duplicate Shopify order.
+     * Otherwise a frontend retry can create
+     * a duplicate Shopify order.
      */
 
     emailError =
@@ -1732,14 +1720,6 @@ async function createOrder(
     emailSent,
 
     emailId,
-
-    /*
-     * Keep this while testing.
-     *
-     * It lets us see the Resend error
-     * without treating the Shopify order
-     * as failed.
-     */
 
     emailError
 
